@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+
+	gorag_qdrant "github.com/lapuglisi/gorag/v2/qdrant"
 )
 
 type EmbedJson struct {
@@ -15,8 +17,14 @@ type EmbedJson struct {
 }
 
 const (
-	HttpDefaultPort = 9091
+	HttpDefaultPort  int    = 9091
+	QdrantDefaultUri string = "http://localhost:6333"
 )
+
+/* Allocate a global variable */
+type GoRagConfig struct {
+	QdrantRag *gorag_qdrant.QdrantRag
+}
 
 func setupEnvironment() {
 	var cwd string
@@ -39,8 +47,15 @@ func setupEnvironment() {
 func main() {
 	var httpPort int
 	var httpHost string
+	var qdrantHost string
+	var qdrantPort int
+
+	var err error
+
 	flag.IntVar(&httpPort, "port", HttpDefaultPort, "HTTP port to listen on")
 	flag.StringVar(&httpHost, "host", "127.0.0.1", "HTTP host to listen on")
+	flag.StringVar(&qdrantHost, "qdrant_host", "127.0.0.1", "Qdrant host")
+	flag.IntVar(&qdrantPort, "qdrant_port", 6334, "Qdrant host")
 
 	flag.Parse()
 	if !flag.Parsed() {
@@ -50,13 +65,48 @@ func main() {
 
 	setupEnvironment()
 
+	gc := &GoRagConfig{}
+
+	/* Setup our GoRagInterface */
+	gc.QdrantRag, err = gorag_qdrant.NewQdrantRag(qdrantHost, qdrantPort)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	http.HandleFunc("/api/embed", HandleEmbed)
+	http.HandleFunc("/api/points", HandlePoints)
 
 	var listenAddr string = fmt.Sprintf("%s:%d", httpHost, httpPort)
 
 	fmt.Printf("Listening on '%s'...\n", listenAddr)
 
-	http.ListenAndServe(listenAddr, nil)
+	err = http.ListenAndServe(listenAddr, nil)
+	if err != nil {
+		fmt.Printf("\x1b[41;37m error \x1b[0m: %s\n", err.Error())
+	}
+}
+
+func HandlePoints(w http.ResponseWriter, r *http.Request) {
+	const ReadSize int = 2048
+	var data []byte = make([]byte, 1)
+
+	if r.Method == http.MethodPost {
+		bytes := make([]byte, ReadSize)
+
+		for {
+			rd, err := r.Body.Read(bytes)
+			if err != nil && err != io.EOF {
+				log.Printf("[HandlePoints] error: %s\n", err.Error())
+				break
+			} else if rd == 0 {
+				break
+			}
+
+			data = append(data, bytes...)
+		}
+
+		log.Printf("[HandlePoints] data received: %s\n", string(data))
+	}
 }
 
 func HandleEmbed(w http.ResponseWriter, r *http.Request) {
