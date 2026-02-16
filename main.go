@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 
-	gorag_qdrant "github.com/lapuglisi/gorag/v2/qdrant"
+	gorag_engine "github.com/lapuglisi/gorag/v2/engine"
 )
 
 type EmbedJson struct {
@@ -49,13 +49,15 @@ func main() {
 	var httpHost string
 	var qdrantHost string
 	var qdrantPort int
+	var llamaModel string
 
 	var err error
 
 	flag.IntVar(&httpPort, "port", HttpDefaultPort, "HTTP port to listen on")
 	flag.StringVar(&httpHost, "host", "127.0.0.1", "HTTP host to listen on")
-	flag.StringVar(&qdrantHost, "qdrant_host", "127.0.0.1", "Qdrant host")
-	flag.IntVar(&qdrantPort, "qdrant_port", 6334, "Qdrant host")
+	flag.StringVar(&qdrantHost, "qhost", "127.0.0.1", "Qdrant host")
+	flag.IntVar(&qdrantPort, "qport", 6334, "Qdrant port")
+	flag.StringVar(&llamaModel, "model", "", "Llama model path")
 
 	flag.Parse()
 	if !flag.Parsed() {
@@ -65,13 +67,13 @@ func main() {
 
 	setupEnvironment()
 
-	gc := &GoRagConfig{}
-
-	/* Setup our GoRagInterface */
-	gc.QdrantRag, err = gorag_qdrant.NewQdrantRag(qdrantHost, qdrantPort)
-	if err != nil {
-		log.Fatal(err)
-	}
+	ge := gorag_engine.NewEngine()
+	ge.Setup(&gorag_engine.EngineOptions{
+		QdrantHost: qdrantHost,
+		QdrantPort: qdrantPort,
+		LlamaModel: llamaModel,
+	})
+	defer ge.Finalize()
 
 	http.HandleFunc("/api/embed", HandleEmbed)
 	http.HandleFunc("/api/points", HandlePoints)

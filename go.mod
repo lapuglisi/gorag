@@ -2,7 +2,10 @@ module github.com/lapuglisi/gorag/v2
 
 go 1.25.7
 
-require github.com/qdrant/go-client v1.16.2
+require (
+	github.com/go-skynet/go-llama.cpp v0.0.0-20240314183750-6a8041ef6b46
+	github.com/qdrant/go-client v1.16.2
+)
 
 require (
 	golang.org/x/net v0.47.0 // indirect
