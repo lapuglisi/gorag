@@ -1,18 +1,12 @@
 package gorag_engine
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"path"
-	"regexp"
 	"strconv"
 	"strings"
 
-	gorag_model "github.com/lapuglisi/gorag/v2/model"
 	"github.com/qdrant/go-client/qdrant"
 )
 
@@ -32,22 +26,10 @@ type EngineOptions struct {
 
 type GoRagEngine struct {
 	QdrantClient *qdrant.Client
-	EmbedServer  string
-	LlamaServer  string
+	LlamaClient  *LlamaEngine
 }
 
 func init() {
-}
-
-func getCollectionFromModel(model string) (collection string) {
-	var basePath string = path.Base(model)
-	var final string = strings.TrimSuffix(basePath, path.Ext(model))
-
-	re := regexp.MustCompile(`[_\%\$\.]`)
-
-	collection = re.ReplaceAllString(final, "-")
-
-	return collection
 }
 
 func NewEngine() (e *GoRagEngine) {
@@ -58,8 +40,6 @@ func NewEngine() (e *GoRagEngine) {
 
 func (e *GoRagEngine) Setup(options EngineOptions) (err error) {
 	log.Println("[GoRagEngine] Setting up.")
-
-	e.EmbedServer = options.EmbedServer
 
 	a := strings.Split(options.QdrantUri, ":")
 	if len(a) != 2 {
@@ -80,6 +60,15 @@ func (e *GoRagEngine) Setup(options EngineOptions) (err error) {
 		return err
 	}
 
+	e.LlamaClient = NewLlamaEngine(options.EmbedServer, options.LlamaServer)
+
+	return nil
+}
+
+func (e *GoRagEngine) SetupEndpoints() (err error) {
+	// http.HandleFunc("/api/embedding", handleEmbedding)
+	// http.HandleFunc("/api/completion", handleCompletion)
+
 	return nil
 }
 
@@ -89,48 +78,4 @@ func (e *GoRagEngine) Finalize() {
 	}
 }
 
-// Private methods for GoRagEngine
-func (e *GoRagEngine) getEmbeddings(input string) (err error) {
-	var llama_resp gorag_model.LlamaEmbedResponse
-	var client = &http.Client{}
-
-	var json_request gorag_model.LlamaEmbedRequest = gorag_model.LlamaEmbedRequest{
-		Input: input,
-	}
-
-	json_bytes, err := json.Marshal(json_request)
-	if err != nil {
-		return err
-	}
-
-	payload := bytes.NewBuffer(json_bytes)
-
-	// Prepare the http.Request struct
-	url := fmt.Sprintf("%s/v1/embeddings", e.EmbedServer)
-	req, err := http.NewRequest(http.MethodPost, url, payload)
-
-	if err != nil {
-		return err
-	}
-
-	req.Header.Add("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if err = json.Unmarshal(body, &llama_resp); err != nil {
-		return err
-	}
-
-	log.Printf("[getEmbeddings] got response: %v\n", llama_resp)
-
-	return nil
-}
+// Private methods / http handlers
