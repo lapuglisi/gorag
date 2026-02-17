@@ -2,12 +2,11 @@ module github.com/lapuglisi/gorag/v2
 
 go 1.25.7
 
-require (
-	github.com/go-skynet/go-llama.cpp v0.0.0-20240314183750-6a8041ef6b46
-	github.com/qdrant/go-client v1.16.2
-)
+require github.com/qdrant/go-client v1.16.2
 
 require (
+	github.com/dianlight/gollama.cpp v0.1.0 // indirect
+	github.com/ebitengine/purego v0.9.1 // indirect
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.31.0 // indirect

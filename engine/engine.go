@@ -1,25 +1,39 @@
 package gorag_engine
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
 	"log"
-	"os"
+	"net/http"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
-	"github.com/go-skynet/go-llama.cpp"
+	gorag_model "github.com/lapuglisi/gorag/v2/model"
 	"github.com/qdrant/go-client/qdrant"
 )
 
+// Llama json specs
+type EmbedRequestJson struct {
+	Input string `json:"input"`
+}
+
+type EmbedResponseJson struct {
+}
+
 type EngineOptions struct {
-	QdrantHost string
-	QdrantPort int
-	LlamaModel string
+	QdrantUri   string
+	EmbedServer string
+	LlamaServer string
 }
 
 type GoRagEngine struct {
 	QdrantClient *qdrant.Client
-	LLama        *llama.LLama
+	EmbedServer  string
+	LlamaServer  string
 }
 
 func init() {
@@ -39,26 +53,26 @@ func getCollectionFromModel(model string) (collection string) {
 func NewEngine() (e *GoRagEngine) {
 	return &GoRagEngine{
 		QdrantClient: nil,
-		LLama:        nil,
 	}
 }
 
-func (e *GoRagEngine) Setup(options *EngineOptions) (err error) {
+func (e *GoRagEngine) Setup(options EngineOptions) (err error) {
 	log.Println("[GoRagEngine] Setting up.")
 
-	_, err = os.Stat(options.LlamaModel)
-	if os.IsNotExist(err) {
-		log.Printf("[Setup] Model file '%s' is not a valid file.\n", options.LlamaModel)
-		return err
+	e.EmbedServer = options.EmbedServer
+
+	a := strings.Split(options.QdrantUri, ":")
+	if len(a) != 2 {
+		return fmt.Errorf("invalid QdrantUri format: got '%s', want 'HOST:PORT'", options.QdrantUri)
 	}
 
-	col := getCollectionFromModel(options.LlamaModel)
-	log.Printf("[Setup] collection name is '%s'\n", col)
+	qdrantHost := a[0]
+	qdrantPort, _ := strconv.ParseInt(a[1], 10, 1)
 
-	log.Printf("[GoRagEngine] Qdrant client: %s:%d\n", options.QdrantHost, options.QdrantPort)
+	log.Printf("[GoRagEngine] Qdrant client: %s:%s\n", qdrantHost, qdrantPort)
 	e.QdrantClient, err = qdrant.NewClient(&qdrant.Config{
-		Host: options.QdrantHost,
-		Port: options.QdrantPort,
+		Host: qdrantHost,
+		Port: int(qdrantPort),
 	})
 
 	if err != nil {
@@ -66,15 +80,9 @@ func (e *GoRagEngine) Setup(options *EngineOptions) (err error) {
 		return err
 	}
 
-	mo := llama.ModelOptions{}
-	mo.Embeddings = true
-
-	e.LLama, err = llama.New(options.LlamaModel,
-		llama.EnableEmbeddings, llama.SetContext(512))
-
+	err = e.getEmbeddings("serominers seroclevers serowonders seropizza")
 	if err != nil {
-		log.Printf("[GoRagEngine::Setup] error while loading the llama model: %s\n", err.Error())
-		return err
+		log.Printf("error: %s\n", err.Error())
 	}
 
 	return nil
@@ -84,8 +92,50 @@ func (e *GoRagEngine) Finalize() {
 	if e.QdrantClient != nil {
 		e.QdrantClient.Close()
 	}
+}
 
-	if e.LLama != nil {
-		e.LLama.Free()
+// Private methods for GoRagEngine
+func (e *GoRagEngine) getEmbeddings(input string) (err error) {
+	var llama_resp gorag_model.LlamaEmbedResponse
+	var client = &http.Client{}
+
+	var json_request gorag_model.LlamaEmbedRequest = gorag_model.LlamaEmbedRequest{
+		Input: input,
 	}
+
+	json_bytes, err := json.Marshal(json_request)
+	if err != nil {
+		return err
+	}
+
+	payload := bytes.NewBuffer(json_bytes)
+
+	// Prepare the http.Request struct
+	url := fmt.Sprintf("%s/v1/embeddings", e.EmbedServer)
+	req, err := http.NewRequest(http.MethodPost, url, payload)
+
+	if err != nil {
+		return err
+	}
+
+	req.Header.Add("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if err = json.Unmarshal(body, &llama_resp); err != nil {
+		return err
+	}
+
+	log.Printf("[getEmbeddings] got response: %v\n", llama_resp)
+
+	return nil
 }

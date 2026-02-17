@@ -1,10 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -12,24 +10,39 @@ import (
 	gorag_engine "github.com/lapuglisi/gorag/v2/engine"
 )
 
-type EmbedJson struct {
-	Content string `json:"content"`
-}
-
 const (
-	HttpDefaultPort  int    = 9091
+	HttpDefaultPort  string = "9091"
+	HttpDefaultHost  string = "localhost"
 	QdrantDefaultUri string = "http://localhost:6333"
+
+	GoragEnvHttpPort    string = "GORAG_ARG_HTTP_PORT"
+	GoragEnvHttpHost    string = "GORAG_ARG_HTTP_HOST"
+	GoRagEnvEmbedServer string = "GORAG_ARG_EMBED_SERVER"
+	GoRagEnvLlamaServer string = "GORAG_ARG_LLAMA_SERVER"
+	GoRagEnvQdrantUri   string = "GORAG_ENV_QDRANT_URI"
 )
 
-/* Allocate a global variable */
-type GoRagConfig struct {
-	QdrantRag *gorag_qdrant.QdrantRag
+type AppOptions struct {
+	HttpHost    string
+	HttpPort    string
+	QdrantUri   string
+	EmbedServer string
+	LlamaServer string
 }
 
-func setupEnvironment() {
+func getEnvOrDefault(key string, value string) string {
+	var s string = os.Getenv(key)
+	if len(s) == 0 {
+		s = value
+	}
+
+	return s
+}
+
+func setupEnvironment(opts *AppOptions) (err error) {
 	var cwd string
 
-	cwd, err := os.Getwd()
+	cwd, err = os.Getwd()
 	if err != nil {
 		cwd = "./"
 	}
@@ -42,43 +55,84 @@ func setupEnvironment() {
 		fmt.Printf("warning: using stderr as log output.\n")
 		log.SetOutput(os.Stderr)
 	}
+
+	// Setup config options
+	envHttpHost := getEnvOrDefault(GoragEnvHttpHost, HttpDefaultHost)
+	envHttpPort := getEnvOrDefault(GoragEnvHttpPort, HttpDefaultPort)
+	envEmbedServer := getEnvOrDefault(GoRagEnvEmbedServer, "")
+	envLlamaServer := getEnvOrDefault(GoRagEnvLlamaServer, "")
+	envQdrantUri := getEnvOrDefault(GoRagEnvQdrantUri, QdrantDefaultUri)
+
+	flags := flag.NewFlagSet("gorag_args", flag.ExitOnError)
+
+	flags.StringVar(&(opts.HttpPort), "port", HttpDefaultPort,
+		"HTTP port to listen on (env "+GoragEnvHttpPort+")")
+	flags.StringVar(&(opts.HttpHost), "host", HttpDefaultHost,
+		"HTTP host to listen on (env "+GoragEnvHttpHost+")")
+	flags.StringVar(&(opts.QdrantUri), "qdrant", QdrantDefaultUri,
+		"Qdrant uri (env "+GoRagEnvQdrantUri+")")
+	flags.StringVar(&(opts.EmbedServer), "embed-server", "",
+		"Llama embedding server (env "+GoRagEnvEmbedServer+")")
+	flags.StringVar(&(opts.LlamaServer), "llama", "",
+		"Llama API server (env "+GoRagEnvLlamaServer+")")
+
+	flags.Parse(os.Args[1:])
+	if !flags.Parsed() {
+		flags.Usage()
+		return fmt.Errorf("could not parse arguments")
+	}
+
+	// Poor man's approach. Kind of ridiculous
+	if len(opts.HttpHost) == 0 {
+		opts.HttpHost = envHttpHost
+	}
+
+	if len(opts.HttpPort) == 0 {
+		opts.HttpPort = envHttpPort
+	}
+
+	if len(opts.QdrantUri) == 0 {
+		opts.QdrantUri = envQdrantUri
+	}
+
+	if len(opts.EmbedServer) == 0 {
+		opts.EmbedServer = envEmbedServer
+	}
+
+	if len(opts.LlamaServer) == 0 {
+		opts.LlamaServer = envLlamaServer
+	}
+
+	return nil
 }
 
 func main() {
-	var httpPort int
-	var httpHost string
-	var qdrantHost string
-	var qdrantPort int
-	var llamaModel string
-
+	var options AppOptions
+	var eo gorag_engine.EngineOptions
 	var err error
 
-	flag.IntVar(&httpPort, "port", HttpDefaultPort, "HTTP port to listen on")
-	flag.StringVar(&httpHost, "host", "127.0.0.1", "HTTP host to listen on")
-	flag.StringVar(&qdrantHost, "qhost", "127.0.0.1", "Qdrant host")
-	flag.IntVar(&qdrantPort, "qport", 6334, "Qdrant port")
-	flag.StringVar(&llamaModel, "model", "", "Llama model path")
-
-	flag.Parse()
-	if !flag.Parsed() {
-		fmt.Println("flags not parsed.")
-		os.Exit(0)
+	if err = setupEnvironment(&options); err != nil {
+		log.Fatal(err)
 	}
 
-	setupEnvironment()
+	eo = gorag_engine.EngineOptions{
+		QdrantUri:   options.QdrantUri,
+		EmbedServer: options.EmbedServer,
+		LlamaServer: options.LlamaServer,
+	}
 
 	ge := gorag_engine.NewEngine()
-	ge.Setup(&gorag_engine.EngineOptions{
-		QdrantHost: qdrantHost,
-		QdrantPort: qdrantPort,
-		LlamaModel: llamaModel,
-	})
+	err = ge.Setup(eo)
+
+	if err != nil {
+		log.Printf("[Engine setup] error: %s\n", err.Error())
+		ge.Finalize()
+		os.Exit(1)
+	}
+
 	defer ge.Finalize()
 
-	http.HandleFunc("/api/embed", HandleEmbed)
-	http.HandleFunc("/api/points", HandlePoints)
-
-	var listenAddr string = fmt.Sprintf("%s:%d", httpHost, httpPort)
+	var listenAddr string = fmt.Sprintf("%s:%s", options.HttpHost, options.HttpPort)
 
 	fmt.Printf("Listening on '%s'...\n", listenAddr)
 
@@ -86,72 +140,4 @@ func main() {
 	if err != nil {
 		fmt.Printf("\x1b[41;37m error \x1b[0m: %s\n", err.Error())
 	}
-}
-
-func HandlePoints(w http.ResponseWriter, r *http.Request) {
-	const ReadSize int = 2048
-	var data []byte = make([]byte, 1)
-
-	if r.Method == http.MethodPost {
-		bytes := make([]byte, ReadSize)
-
-		for {
-			rd, err := r.Body.Read(bytes)
-			if err != nil && err != io.EOF {
-				log.Printf("[HandlePoints] error: %s\n", err.Error())
-				break
-			} else if rd == 0 {
-				break
-			}
-
-			data = append(data, bytes...)
-		}
-
-		log.Printf("[HandlePoints] data received: %s\n", string(data))
-	}
-}
-
-func HandleEmbed(w http.ResponseWriter, r *http.Request) {
-
-	if r.Method == http.MethodPost {
-		log.Println("HandleEmbed: method POST")
-		handleEmbedPost(r)
-	} else {
-		log.Printf("HandleEmbed: method %v\n", r.Method)
-	}
-}
-
-func parseEmbedJson(j []byte) (err error) {
-	var embed_json EmbedJson
-
-	err = json.Unmarshal(j, &embed_json)
-	if err != nil {
-		log.Println("parseEmbedJson error:", err)
-		return err
-	}
-
-	log.Println("Parsed json:", embed_json.Content)
-
-	return nil
-}
-
-func handleEmbedPost(r *http.Request) {
-	const ReadBytes int = 2048
-	var bytes []byte = make([]byte, ReadBytes)
-
-	for {
-		read, err := r.Body.Read(bytes)
-		if err != nil && err != io.EOF {
-			log.Printf("handleEmbedPost error: %s\n", err.Error())
-			break
-		} else if read == 0 {
-			break
-		}
-
-		res := bytes[:read]
-
-		parseEmbedJson(res)
-	}
-
-	log.Println("end handleEmbedPost")
 }
