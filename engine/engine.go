@@ -67,9 +67,9 @@ func (e *GoRagEngine) Setup(options EngineOptions) (err error) {
 	}
 
 	qdrantHost := a[0]
-	qdrantPort, _ := strconv.ParseInt(a[1], 10, 1)
+	qdrantPort, _ := strconv.ParseInt(a[1], 10, 32)
 
-	log.Printf("[GoRagEngine] Qdrant client: %s:%s\n", qdrantHost, qdrantPort)
+	log.Printf("[GoRagEngine] Qdrant client: %s:%d\n", qdrantHost, qdrantPort)
 	e.QdrantClient, err = qdrant.NewClient(&qdrant.Config{
 		Host: qdrantHost,
 		Port: int(qdrantPort),
@@ -78,11 +78,6 @@ func (e *GoRagEngine) Setup(options EngineOptions) (err error) {
 	if err != nil {
 		log.Printf("[GoRagEngine::Setup] error: %s\n", err.Error())
 		return err
-	}
-
-	err = e.getEmbeddings("serominers seroclevers serowonders seropizza")
-	if err != nil {
-		log.Printf("error: %s\n", err.Error())
 	}
 
 	return nil

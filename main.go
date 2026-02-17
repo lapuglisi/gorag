@@ -13,7 +13,7 @@ import (
 const (
 	HttpDefaultPort  string = "9091"
 	HttpDefaultHost  string = "localhost"
-	QdrantDefaultUri string = "http://localhost:6333"
+	QdrantDefaultUri string = "localhost:6333"
 
 	GoragEnvHttpPort    string = "GORAG_ARG_HTTP_PORT"
 	GoragEnvHttpHost    string = "GORAG_ARG_HTTP_HOST"
@@ -57,13 +57,14 @@ func setupEnvironment(opts *AppOptions) (err error) {
 	}
 
 	// Setup config options
+	var callHelp bool = false
 	envHttpHost := getEnvOrDefault(GoragEnvHttpHost, HttpDefaultHost)
 	envHttpPort := getEnvOrDefault(GoragEnvHttpPort, HttpDefaultPort)
 	envEmbedServer := getEnvOrDefault(GoRagEnvEmbedServer, "")
 	envLlamaServer := getEnvOrDefault(GoRagEnvLlamaServer, "")
 	envQdrantUri := getEnvOrDefault(GoRagEnvQdrantUri, QdrantDefaultUri)
 
-	flags := flag.NewFlagSet("gorag_args", flag.ExitOnError)
+	flags := flag.NewFlagSet("gorag-server", flag.ExitOnError)
 
 	flags.StringVar(&(opts.HttpPort), "port", HttpDefaultPort,
 		"HTTP port to listen on (env "+GoragEnvHttpPort+")")
@@ -75,11 +76,17 @@ func setupEnvironment(opts *AppOptions) (err error) {
 		"Llama embedding server (env "+GoRagEnvEmbedServer+")")
 	flags.StringVar(&(opts.LlamaServer), "llama", "",
 		"Llama API server (env "+GoRagEnvLlamaServer+")")
+	flags.BoolVar(&callHelp, "help", false, "show usage/help (that's me)")
 
 	flags.Parse(os.Args[1:])
 	if !flags.Parsed() {
 		flags.Usage()
 		return fmt.Errorf("could not parse arguments")
+	}
+
+	if callHelp {
+		flags.Usage()
+		os.Exit(0)
 	}
 
 	// Poor man's approach. Kind of ridiculous
@@ -114,6 +121,13 @@ func main() {
 	if err = setupEnvironment(&options); err != nil {
 		log.Fatal(err)
 	}
+
+	log.Println("gorag-server started")
+	log.Println("HttpHost is .......", options.HttpHost)
+	log.Println("HttpPort is .......", options.HttpPort)
+	log.Println("QdrantUri is ......", options.QdrantUri)
+	log.Println("EmbedServer is ....", options.EmbedServer)
+	log.Println("LlamaServer is ....", options.LlamaServer)
 
 	eo = gorag_engine.EngineOptions{
 		QdrantUri:   options.QdrantUri,
