@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 
 	gorag_engine "github.com/lapuglisi/gorag/v2/engine"
@@ -130,6 +129,7 @@ func main() {
 	log.Println("LlamaServer is ....", options.LlamaServer)
 
 	eo = gorag_engine.EngineOptions{
+		ServerUri:   fmt.Sprintf("%s:%s", options.HttpHost, options.HttpPort),
 		QdrantUri:   options.QdrantUri,
 		EmbedServer: options.EmbedServer,
 		LlamaServer: options.LlamaServer,
@@ -146,12 +146,5 @@ func main() {
 
 	defer ge.Finalize()
 
-	var listenAddr string = fmt.Sprintf("%s:%s", options.HttpHost, options.HttpPort)
-
-	fmt.Printf("Listening on '%s'...\n", listenAddr)
-
-	err = http.ListenAndServe(listenAddr, nil)
-	if err != nil {
-		fmt.Printf("\x1b[41;37m error \x1b[0m: %s\n", err.Error())
-	}
+	log.Fatal(ge.ListenAndServe())
 }

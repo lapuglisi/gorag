@@ -1,7 +1,9 @@
 package gorag_engine
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -16,15 +18,24 @@ type EmbedRequestJson struct {
 }
 
 type EmbedResponseJson struct {
+	Status     EngineResponseJson `json:"result"`
+	Embeddings [][]float32        `json:"embeddings"`
+}
+
+type EngineResponseJson struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
 }
 
 type EngineOptions struct {
+	ServerUri   string
 	QdrantUri   string
 	EmbedServer string
 	LlamaServer string
 }
 
 type GoRagEngine struct {
+	ServerUrl    string
 	QdrantClient *qdrant.Client
 	LlamaClient  *LlamaEngine
 }
@@ -61,15 +72,18 @@ func (e *GoRagEngine) Setup(options EngineOptions) (err error) {
 	}
 
 	e.LlamaClient = NewLlamaEngine(options.EmbedServer, options.LlamaServer)
+	e.ServerUrl = options.ServerUri
 
 	return nil
 }
 
-func (e *GoRagEngine) SetupEndpoints() (err error) {
-	// http.HandleFunc("/api/embedding", handleEmbedding)
-	// http.HandleFunc("/api/completion", handleCompletion)
+func (e *GoRagEngine) ListenAndServe() (err error) {
+	http.HandleFunc("/api/embedding", e.handleEmbedding)
+	http.HandleFunc("/api/completion", e.handleCompletion)
 
-	return nil
+	fmt.Printf("[gorag] Listening on '%s'...\n", e.ServerUrl)
+
+	return http.ListenAndServe(e.ServerUrl, nil)
 }
 
 func (e *GoRagEngine) Finalize() {
@@ -79,3 +93,78 @@ func (e *GoRagEngine) Finalize() {
 }
 
 // Private methods / http handlers
+func (e *GoRagEngine) sendResponseError(err string, resp http.ResponseWriter) {
+	var v EngineResponseJson = EngineResponseJson{
+		Status:  "error",
+		Message: err,
+	}
+
+	resp.WriteHeader(http.StatusInternalServerError)
+
+	if b, err := json.Marshal(v); err == nil {
+		resp.Write(b)
+	}
+}
+
+func (e *GoRagEngine) handleEmbedding(resp http.ResponseWriter, req *http.Request) {
+	var embedJson EmbedRequestJson
+	if req.Method != http.MethodPost {
+		resp.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	reqBytes, err := io.ReadAll(req.Body)
+	if err != nil {
+		e.sendResponseError("could not read request data", resp)
+		return
+	}
+
+	log.Printf("[handleEmbedding] got '%s'\n", string(reqBytes))
+
+	err = json.Unmarshal(reqBytes, &embedJson)
+	if err != nil {
+		e.sendResponseError(err.Error(), resp)
+		return
+	}
+
+	log.Printf("[handleEmbedding] got json '%v'\n", embedJson)
+
+	embeds, err := e.LlamaClient.GetEmbeddings(embedJson.Input)
+	if err != nil {
+		e.sendResponseError(err.Error(), resp)
+		return
+	}
+
+	var embedsLen int = len(embeds)
+	log.Printf("/api/embeddings: got embeddings (%d) %v\n", embedsLen, embeds)
+
+	erj := EmbedResponseJson{
+		Status: EngineResponseJson{
+			Status:  "success",
+			Message: "embeddings retrieved",
+		},
+		Embeddings: make([][]float32, embedsLen),
+	}
+
+	for i, embed := range embeds {
+		erj.Embeddings[i] = embed
+	}
+
+	erjBytes, err := json.Marshal(erj)
+	if err != nil {
+		e.sendResponseError(err.Error(), resp)
+		return
+	}
+
+	resp.Header().Add("Content-Type", "application/json")
+	written, err := resp.Write(erjBytes)
+	if err != nil {
+		e.sendResponseError(err.Error(), resp)
+		return
+	}
+
+	log.Printf("/api/embeddings: sent %d bytes to client\n", written)
+}
+
+func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Request) {
+}

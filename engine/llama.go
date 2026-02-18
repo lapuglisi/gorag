@@ -28,12 +28,6 @@ type llamaEmbedResponse struct {
 	} `json:"data"`
 }
 
-type llamaCompleteRequest struct {
-}
-
-type llamaCompleteResponse struct {
-}
-
 // LlamaEngine: The main engine for Llama operations
 type LlamaEngine struct {
 	LlamaServer string
@@ -100,6 +94,5 @@ func (l *LlamaEngine) GetEmbeddings(input string) (embeds [][]float32, err error
 
 	log.Printf("final embeds: %v\n", embeds)
 
-	// return embeds, nil
-	return nil, nil
+	return embeds, nil
 }
