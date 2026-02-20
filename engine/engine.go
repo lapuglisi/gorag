@@ -27,6 +27,10 @@ type EngineResponseJson struct {
 	Message string `json:"message"`
 }
 
+type EngineCompletionRequest struct {
+	Prompt string `json:"prompt"`
+}
+
 type EngineOptions struct {
 	ServerUri   string
 	QdrantUri   string
@@ -167,4 +171,35 @@ func (e *GoRagEngine) handleEmbedding(resp http.ResponseWriter, req *http.Reques
 }
 
 func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Request) {
+	var er EngineCompletionRequest
+
+	data, err := io.ReadAll(req.Body)
+	if err != nil {
+		e.sendResponseError(err.Error(), resp)
+		return
+	}
+
+	if err = json.Unmarshal(data, &er); err != nil {
+		e.sendResponseError(err.Error(), resp)
+		return
+	}
+
+	lcr := llamaCompletionRequest{
+		Messages: make([]llamaCompletionMessages, 2),
+		Stream:   true,
+	}
+
+	lcr.Messages[0] = llamaCompletionMessages{
+		Role:    "system",
+		Content: "busco sexo",
+	}
+
+	lcr.Messages[1] = llamaCompletionMessages{
+		Role:    "user",
+		Content: "busco amizades",
+	}
+
+	err = e.LlamaClient.GetCompletions(lcr)
+
+	log.Printf("END handleCompletion: %s\n", err.Error())
 }

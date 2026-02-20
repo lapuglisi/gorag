@@ -28,6 +28,17 @@ type llamaEmbedResponse struct {
 	} `json:"data"`
 }
 
+type llamaCompletionMessages struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type llamaCompletionRequest struct {
+	Messages    []llamaCompletionMessages `json:"messages"`
+	Stream      bool                      `json:"stream"`
+	Temperature float32                   `json:"temperature"`
+}
+
 // LlamaEngine: The main engine for Llama operations
 type LlamaEngine struct {
 	LlamaServer string
@@ -95,4 +106,46 @@ func (l *LlamaEngine) GetEmbeddings(input string) (embeds [][]float32, err error
 	log.Printf("final embeds: %v\n", embeds)
 
 	return embeds, nil
+}
+
+func (l *LlamaEngine) GetCompletions(data llamaCompletionRequest) (err error) {
+	var client *http.Client = &http.Client{}
+
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	payload := bytes.NewBuffer(jsonBytes)
+
+	var uri string = fmt.Sprintf("%s/v1/chat/completions", l.LlamaServer)
+	req, err := http.NewRequest(http.MethodPost, uri, payload)
+
+	if err != nil {
+		return err
+	}
+
+	req.Header.Add("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	for {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("resp read: %s\n", err.Error())
+			break
+		}
+
+		if len(body) == 0 {
+			log.Printf("[GetCompletions] got empty response.\n")
+			break
+		}
+
+		fmt.Printf("stream: [%s]\n", string(body))
+	}
+
+	return nil
 }
