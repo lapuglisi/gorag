@@ -184,6 +184,8 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 		return
 	}
 
+	log.Printf("handleCompletion\n")
+
 	lcr := llamaCompletionRequest{
 		Messages: make([]llamaCompletionMessages, 2),
 		Stream:   true,
@@ -199,7 +201,18 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 		Content: "busco amizades",
 	}
 
-	err = e.LlamaClient.GetCompletions(lcr)
+	err = e.LlamaClient.GetCompletions(lcr, func(data string) error {
+		actualData, found := strings.CutPrefix(data, "data: ")
+		if found {
+			dataBytes := []byte(actualData)
 
-	log.Printf("END handleCompletion: %s\n", err.Error())
+			_, err = resp.Write(dataBytes)
+			if err != nil {
+				log.Printf("handleCompletion: error while writing response: %s\n", err.Error())
+				return err
+			}
+		} // else data != event-stream data
+
+		return nil
+	})
 }

@@ -1,6 +1,7 @@
 package gorag_engine
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -38,6 +39,27 @@ type llamaCompletionRequest struct {
 	Stream      bool                      `json:"stream"`
 	Temperature float32                   `json:"temperature"`
 }
+
+type LlamaCompletionCallback func(data string) error
+
+type LlamaCompletionStream struct {
+	Choices []struct {
+		FinishReason string `json:"finish_reason"`
+		Index        int    `json:"index"`
+		Delta        struct {
+			Content string `json:"content"`
+		} `json:"delta"`
+	}
+	Created           int64  `json:"created"`
+	Id                string `json:"id"`
+	Model             string `json:"model"`
+	SystemFingerprint string `json:"system_fingerprint"`
+	Object            string `json:"object"`
+}
+
+/*
+{"choices":[{"finish_reason":null,"index":0,"delta":{"content":"   "}}],"created":1771969829,"id":"chatcmpl-Xivhjctd2SGq0o4M7H654nVdbpCDzb7L","model":"gemma-3-4b-it-uncensored-v2_Q4_K_M.gguf","system_fingerprint":"b8022-3bb78133a","object":"chat.completion.chunk"}
+*/
 
 // LlamaEngine: The main engine for Llama operations
 type LlamaEngine struct {
@@ -108,7 +130,9 @@ func (l *LlamaEngine) GetEmbeddings(input string) (embeds [][]float32, err error
 	return embeds, nil
 }
 
-func (l *LlamaEngine) GetCompletions(data llamaCompletionRequest) (err error) {
+func (l *LlamaEngine) GetCompletions(
+	data llamaCompletionRequest,
+	callback LlamaCompletionCallback) (err error) {
 	var client *http.Client = &http.Client{}
 
 	jsonBytes, err := json.Marshal(data)
@@ -125,27 +149,31 @@ func (l *LlamaEngine) GetCompletions(data llamaCompletionRequest) (err error) {
 		return err
 	}
 
-	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("Accept", "text/event-stream")
 
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 
+	log.Println("LlamaEngine::GetCompletions:", data)
+
+	err = nil
+
+	reader := bufio.NewReader(resp.Body)
 	for {
-		body, err := io.ReadAll(resp.Body)
+		stream, err := reader.ReadString('\n')
 		if err != nil {
 			log.Printf("resp read: %s\n", err.Error())
 			break
 		}
 
-		if len(body) == 0 {
-			log.Printf("[GetCompletions] got empty response.\n")
+		if err = callback(stream); err != nil {
+			log.Printf("GetCompletions: callback error: %s\n", err.Error())
 			break
 		}
-
-		fmt.Printf("stream: [%s]\n", string(body))
 	}
 
-	return nil
+	return err
 }
