@@ -12,13 +12,13 @@ import (
 const (
 	HttpDefaultPort  string = "9091"
 	HttpDefaultHost  string = "localhost"
-	QdrantDefaultUri string = "localhost:6333"
+	QdrantDefaultUri string = "localhost:6334"
 
 	GoragEnvHttpPort    string = "GORAG_ARG_HTTP_PORT"
 	GoragEnvHttpHost    string = "GORAG_ARG_HTTP_HOST"
 	GoRagEnvEmbedServer string = "GORAG_ARG_EMBED_SERVER"
 	GoRagEnvLlamaServer string = "GORAG_ARG_LLAMA_SERVER"
-	GoRagEnvQdrantUri   string = "GORAG_ENV_QDRANT_URI"
+	GoRagEnvQdrantUri   string = "GORAG_ARG_QDRANT_URI"
 )
 
 type AppOptions struct {
@@ -89,24 +89,29 @@ func setupEnvironment(opts *AppOptions) (err error) {
 	}
 
 	// Poor man's approach. Kind of ridiculous
-	if len(opts.HttpHost) == 0 {
+	if len(envHttpHost) > 0 {
 		opts.HttpHost = envHttpHost
 	}
 
-	if len(opts.HttpPort) == 0 {
+	if len(envHttpPort) > 0 {
 		opts.HttpPort = envHttpPort
 	}
 
-	if len(opts.QdrantUri) == 0 {
+	if len(envQdrantUri) > 0 {
 		opts.QdrantUri = envQdrantUri
 	}
 
-	if len(opts.EmbedServer) == 0 {
+	if len(envEmbedServer) > 0 {
 		opts.EmbedServer = envEmbedServer
 	}
 
-	if len(opts.LlamaServer) == 0 {
+	if len(envLlamaServer) > 0 {
 		opts.LlamaServer = envLlamaServer
+	}
+
+	// Now for consistency
+	if len(opts.LlamaServer) == 0 || len(opts.EmbedServer) == 0 {
+		return fmt.Errorf("either LlamaServer or EmbedServer was not defined")
 	}
 
 	return nil

@@ -1,9 +1,17 @@
-GOLLAMA_CPP_PATH = ~/sources/github.com/go-skynet/go-llama.cpp
+all: build
 
-C_INCLUDE_PATH = $(GOLLAMA_CPP_PATH)
+build:
+	go build .
 
-all:
+debug:
+	CGO_CFLAGS="-g" go build .
 
 run:
-	LIBRARY_PATH="$(GOLLAMA_CPP_PATH)" C_INCLUDE_PATH="$(GOLLAMA_CPP_PATH)" go run -tags openblas .
+	go run .
+
+install: build
+	sudo cp -iv gorag /usr/local/bin/gorag
+
+clean:
+	go clean
 

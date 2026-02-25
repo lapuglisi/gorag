@@ -191,6 +191,11 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 	var er EngineCompletionRequest
 	var lcr llamaCompletionRequest
 
+	resp.Header().Add("Access-Control-Allow-Origin", "https://busco.luizpuglisi.me")
+	resp.Header().Add("Access-Control-Allow-Headers",
+		"X-Custom-Header, authorization, content-type, Content-Type")
+	resp.WriteHeader(http.StatusOK)
+
 	data, err := io.ReadAll(req.Body)
 	if err != nil {
 		e.sendResponseError(err.Error(), resp)
@@ -253,17 +258,16 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 
 	log.Printf("[handleCompletion] getting completion for: %v\n", lcr)
 
-	err = e.LlamaClient.GetCompletions(lcr, func(data string) error {
-		actualData, found := strings.CutPrefix(data, "data: ")
-		if found {
-			dataBytes := []byte(actualData)
+	resp.Header().Add("Content-Type", "text/event-stream")
 
-			_, err = resp.Write(dataBytes)
-			if err != nil {
-				log.Printf("handleCompletion: error while writing response: %s\n", err.Error())
-				return err
-			}
-		} // else data != event-stream data
+	err = e.LlamaClient.GetCompletions(lcr, func(data string) error {
+		dataBytes := []byte(data)
+		_, err = resp.Write(dataBytes)
+
+		if err != nil {
+			log.Printf("handleCompletion: error while writing response: %s\n", err.Error())
+			return err
+		}
 
 		return nil
 	})
