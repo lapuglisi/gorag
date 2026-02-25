@@ -40,6 +40,11 @@ type llamaCompletionRequest struct {
 	Temperature float32                   `json:"temperature"`
 }
 
+type llamaEmbeddings struct {
+	Model      string      `json:"model"`
+	Embeddings [][]float32 `json:"embeddings"`
+}
+
 type LlamaCompletionCallback func(data string) error
 
 type LlamaCompletionStream struct {
@@ -57,10 +62,6 @@ type LlamaCompletionStream struct {
 	Object            string `json:"object"`
 }
 
-/*
-{"choices":[{"finish_reason":null,"index":0,"delta":{"content":"   "}}],"created":1771969829,"id":"chatcmpl-Xivhjctd2SGq0o4M7H654nVdbpCDzb7L","model":"gemma-3-4b-it-uncensored-v2_Q4_K_M.gguf","system_fingerprint":"b8022-3bb78133a","object":"chat.completion.chunk"}
-*/
-
 // LlamaEngine: The main engine for Llama operations
 type LlamaEngine struct {
 	LlamaServer string
@@ -76,7 +77,7 @@ func NewLlamaEngine(es string, ls string) (e *LlamaEngine) {
 }
 
 // GetEmbeddings
-func (l *LlamaEngine) GetEmbeddings(input string) (embeds [][]float32, err error) {
+func (l *LlamaEngine) GetEmbeddings(input string) (embeds *llamaEmbeddings, err error) {
 	var llama_resp llamaEmbedResponse
 	var client = &http.Client{}
 
@@ -116,12 +117,15 @@ func (l *LlamaEngine) GetEmbeddings(input string) (embeds [][]float32, err error
 		return nil, err
 	}
 
+	embeds = &llamaEmbeddings{}
+	embeds.Model = llama_resp.Model
+
 	if dataLen := len(llama_resp.Data); dataLen > 0 {
-		embeds = make([][]float32, dataLen)
+		embeds.Embeddings = make([][]float32, dataLen)
 
 		for i, data := range llama_resp.Data {
-			embeds[i] = make([]float32, 1)
-			embeds[i] = data.Embedding
+			embeds.Embeddings[i] = make([]float32, 0)
+			embeds.Embeddings[i] = append(embeds.Embeddings[i], data.Embedding...)
 		}
 	}
 

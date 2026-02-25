@@ -1,6 +1,7 @@
 package gorag_engine
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -96,6 +97,22 @@ func (e *GoRagEngine) Finalize() {
 	}
 }
 
+func (e *GoRagEngine) getCollectionFromModel(model string) string {
+
+	extpos := strings.LastIndex(model, ".")
+	if extpos > -1 {
+		model = model[:extpos]
+	}
+
+	replacer := strings.NewReplacer(
+		"_", "-",
+		".", "-",
+		"|", "-",
+		"%", "-")
+
+	return replacer.Replace(model)
+}
+
 // Private methods / http handlers
 func (e *GoRagEngine) sendResponseError(err string, resp http.ResponseWriter) {
 	var v EngineResponseJson = EngineResponseJson{
@@ -139,7 +156,7 @@ func (e *GoRagEngine) handleEmbedding(resp http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	var embedsLen int = len(embeds)
+	var embedsLen int = len(embeds.Embeddings)
 	log.Printf("/api/embeddings: got embeddings (%d) %v\n", embedsLen, embeds)
 
 	erj := EmbedResponseJson{
@@ -150,7 +167,7 @@ func (e *GoRagEngine) handleEmbedding(resp http.ResponseWriter, req *http.Reques
 		Embeddings: make([][]float32, embedsLen),
 	}
 
-	for i, embed := range embeds {
+	for i, embed := range embeds.Embeddings {
 		erj.Embeddings[i] = embed
 	}
 
@@ -172,6 +189,7 @@ func (e *GoRagEngine) handleEmbedding(resp http.ResponseWriter, req *http.Reques
 
 func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Request) {
 	var er EngineCompletionRequest
+	var lcr llamaCompletionRequest
 
 	data, err := io.ReadAll(req.Body)
 	if err != nil {
@@ -184,22 +202,56 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	log.Printf("handleCompletion\n")
-
-	lcr := llamaCompletionRequest{
-		Messages: make([]llamaCompletionMessages, 2),
-		Stream:   true,
+	if len(er.Prompt) == 0 {
+		e.sendResponseError("no valid input provided", resp)
+		return
 	}
 
-	lcr.Messages[0] = llamaCompletionMessages{
-		Role:    "system",
-		Content: "busco sexo",
+	log.Printf("[handleCompletion] prompt is %s\n", er.Prompt)
+
+	// Get points from qdrant
+	points, err := e.getQdrantPoints(er.Prompt)
+	if err != nil {
+		e.sendResponseError(err.Error(), resp)
+		return
 	}
 
-	lcr.Messages[1] = llamaCompletionMessages{
-		Role:    "user",
-		Content: "busco amizades",
+	// Consider using 'i' and operate on 'Messages' accordingly
+	if len(points) > 0 {
+		lcr = llamaCompletionRequest{
+			Messages: make([]llamaCompletionMessages, 2),
+			Stream:   true,
+		}
+
+		sysmsg := fmt.Sprintf(
+			"Use the following information to answer the user query.\n"+
+				"Use the provided information as possible as you (LLM) can but feel free to "+
+				"add any extra information should you (LLM) need to or feel like to.\n"+
+				"Make sure to answer the user query in the language the user speaks!!!\n\n"+
+				"%s", strings.Join(points, "\n"))
+
+		lcr.Messages[0] = llamaCompletionMessages{
+			Role:    "system",
+			Content: sysmsg,
+		}
+
+		lcr.Messages[1] = llamaCompletionMessages{
+			Role:    "user",
+			Content: er.Prompt,
+		}
+	} else {
+		lcr = llamaCompletionRequest{
+			Messages: make([]llamaCompletionMessages, 1),
+			Stream:   true,
+		}
+
+		lcr.Messages[0] = llamaCompletionMessages{
+			Role:    "user",
+			Content: er.Prompt,
+		}
 	}
+
+	log.Printf("[handleCompletion] getting completion for: %v\n", lcr)
 
 	err = e.LlamaClient.GetCompletions(lcr, func(data string) error {
 		actualData, found := strings.CutPrefix(data, "data: ")
@@ -215,4 +267,56 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 
 		return nil
 	})
+}
+
+func (e *GoRagEngine) getQdrantPoints(input string) (data []string, err error) {
+	data = make([]string, 0)
+
+	log.Printf("[getQdrantPoints] getting embeds from llama.\n")
+
+	embeds, err := e.LlamaClient.GetEmbeddings(input)
+	if err != nil {
+		log.Printf("[getQdrantPoints] embeds error: %s\n", err.Error())
+		return nil, err
+	}
+
+	collection := e.getCollectionFromModel(embeds.Model)
+	limit := uint64(3)
+
+	log.Printf("[getQdrantPoints] using collection '%s'\n", collection)
+
+	for _, embed := range embeds.Embeddings {
+		log.Printf("[getQdrantPoints] searching points for input...\n")
+
+		sp, err := e.QdrantClient.Query(context.Background(), &qdrant.QueryPoints{
+			CollectionName: collection,
+			Query:          qdrant.NewQuery(embed...),
+			WithVectors:    qdrant.NewWithVectorsEnable(true),
+			WithPayload:    qdrant.NewWithPayloadEnable(true),
+			Limit:          &limit,
+		})
+
+		if err != nil {
+			log.Printf("[getQdrantPoints] qdrant error: %s\n", err.Error())
+			continue
+		}
+
+		log.Printf("[getQdrantPoints] got sp, len is %d\n", len(sp))
+
+		for _, point := range sp {
+			log.Printf("[getQdrantPoints] point %s has %d payloads\n", point.Id, len(point.Payload))
+			payload := point.Payload["source"]
+
+			if payload == nil {
+				log.Printf("[getQdrantPoints] payload 'source' not found for point %s. Skipping.\n", point.Id)
+				continue
+			}
+
+			data = append(data, payload.GetStringValue())
+		}
+	}
+
+	log.Printf("[getQdrantPoints] got data array: %v\n", data)
+
+	return data, nil
 }
