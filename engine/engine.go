@@ -29,7 +29,8 @@ type EngineResponseJson struct {
 }
 
 type EngineCompletionRequest struct {
-	Prompt string `json:"prompt"`
+	Prompt      string  `json:"prompt"`
+	Temperature float32 `json:"temperature"`
 }
 
 type EngineOptions struct {
@@ -192,8 +193,7 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 	var lcr llamaCompletionRequest
 
 	resp.Header().Add("Access-Control-Allow-Origin", "https://busco.luizpuglisi.me")
-	resp.Header().Add("Access-Control-Allow-Headers",
-		"X-Custom-Header, authorization, content-type, Content-Type")
+	resp.Header().Add("Access-Control-Allow-Headers", "authorization, content-type")
 	resp.WriteHeader(http.StatusOK)
 
 	data, err := io.ReadAll(req.Body)
@@ -202,6 +202,7 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 		return
 	}
 
+	er.Temperature = 0.5
 	if err = json.Unmarshal(data, &er); err != nil {
 		e.sendResponseError(err.Error(), resp)
 		return
@@ -215,7 +216,7 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 	log.Printf("[handleCompletion] prompt is %s\n", er.Prompt)
 
 	// Get points from qdrant
-	points, err := e.getQdrantPoints(er.Prompt)
+	points, err := e.getQdrantPoints(er.Prompt, er.Temperature)
 	if err != nil {
 		e.sendResponseError(err.Error(), resp)
 		return
@@ -258,11 +259,22 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 
 	log.Printf("[handleCompletion] getting completion for: %v\n", lcr)
 
-	resp.Header().Add("Content-Type", "text/event-stream")
+	flusher, ok := resp.(http.Flusher)
+	if !ok {
+		e.sendResponseError("response cannot send Server Side Events", resp)
+		return
+	}
+
+	// Make sure our response write adds the correct headers for text/event-stream
+	resp.Header().Add("content-type", "text/event-stream")
+	resp.Header().Add("cache-control", "no-cache")
+	resp.Header().Add("connection", "keep-alive")
+	resp.Header().Add("transfer-encoding", "chunked")
+	resp.Header().Add("keep-alive", "timeout=5, max=100")
 
 	err = e.LlamaClient.GetCompletions(lcr, func(data string) error {
-		dataBytes := []byte(data)
-		_, err = resp.Write(dataBytes)
+		_, err = fmt.Fprint(resp, data)
+		flusher.Flush()
 
 		if err != nil {
 			log.Printf("handleCompletion: error while writing response: %s\n", err.Error())
@@ -273,7 +285,7 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 	})
 }
 
-func (e *GoRagEngine) getQdrantPoints(input string) (data []string, err error) {
+func (e *GoRagEngine) getQdrantPoints(input string, temp float32) (data []string, err error) {
 	data = make([]string, 0)
 
 	log.Printf("[getQdrantPoints] getting embeds from llama.\n")
@@ -308,7 +320,15 @@ func (e *GoRagEngine) getQdrantPoints(input string) (data []string, err error) {
 		log.Printf("[getQdrantPoints] got sp, len is %d\n", len(sp))
 
 		for _, point := range sp {
-			log.Printf("[getQdrantPoints] point %s has %d payloads\n", point.Id, len(point.Payload))
+			log.Printf("[getQdrantPoints] point %s has %d payloads, score %f\n",
+				point.Id, len(point.Payload), point.Score)
+
+			if point.Score < temp {
+				log.Printf("[getQdrantPoints] point %s has score %f, lower than temp %f. Skipping.\n",
+					point.Id, point.Score, temp)
+				continue
+			}
+
 			payload := point.Payload["source"]
 
 			if payload == nil {
