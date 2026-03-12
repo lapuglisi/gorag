@@ -230,11 +230,12 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 		}
 
 		sysmsg := fmt.Sprintf(
-			"Use the following information to answer the user query.\n"+
-				"Use the provided information as possible as you (LLM) can but feel free to "+
+			"You are a very helpfull assistant an a hundred percent reliable.\n"+
+				"Use the provided context to answer to the user's query/question.\n"+
+				"Make sure to answer the user in the language she or he speaks.\n"+
+				"Use the provided context as possible as you (LLM) can but feel free to "+
 				"add any extra information should you (LLM) need to or feel like to.\n"+
-				"Make sure to answer the user query in the language the user speaks!!!\n\n"+
-				"%s", strings.Join(points, "\n"))
+				"Context: %s", strings.Join(points, "\n"))
 
 		lcr.Messages[0] = llamaCompletionMessages{
 			Role:    "system",
