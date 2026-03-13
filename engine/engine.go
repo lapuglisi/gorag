@@ -38,12 +38,14 @@ type EngineOptions struct {
 	QdrantUri   string
 	EmbedServer string
 	LlamaServer string
+	QdrantLimit uint64
 }
 
 type GoRagEngine struct {
 	ServerUrl    string
 	QdrantClient *qdrant.Client
 	LlamaClient  *LlamaEngine
+	QdrantLimit  uint64
 }
 
 func init() {
@@ -79,6 +81,7 @@ func (e *GoRagEngine) Setup(options EngineOptions) (err error) {
 
 	e.LlamaClient = NewLlamaEngine(options.EmbedServer, options.LlamaServer)
 	e.ServerUrl = options.ServerUri
+	e.QdrantLimit = options.QdrantLimit
 
 	return nil
 }
@@ -232,9 +235,7 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 		sysmsg := fmt.Sprintf(
 			"You are a very helpfull assistant an a hundred percent reliable.\n"+
 				"Use the provided context to answer to the user's query/question.\n"+
-				"Make sure to answer the user in the language she or he speaks.\n"+
-				"Use the provided context as possible as you (LLM) can but feel free to "+
-				"add any extra information should you (LLM) need to or feel like to.\n"+
+				"Make sure to answer in the original language.\n"+
 				"Context: %s", strings.Join(points, "\n"))
 
 		lcr.Messages[0] = llamaCompletionMessages{
@@ -298,20 +299,28 @@ func (e *GoRagEngine) getQdrantPoints(input string, temp float32) (data []string
 	}
 
 	collection := e.getCollectionFromModel(embeds.Model)
-	limit := uint64(3)
 
-	log.Printf("[getQdrantPoints] using collection '%s'\n", collection)
+	log.Printf("[getQdrantPoints] using qdrant limit: %u\n", e.QdrantLimit)
+	log.Printf("[getQdrantPoints] using collection: '%s'\n", collection)
 
 	for _, embed := range embeds.Embeddings {
 		log.Printf("[getQdrantPoints] searching points for input...\n")
 
-		sp, err := e.QdrantClient.Query(context.Background(), &qdrant.QueryPoints{
+		// Setup qdrant query points
+		queryPoints := &qdrant.QueryPoints{
 			CollectionName: collection,
 			Query:          qdrant.NewQuery(embed...),
 			WithVectors:    qdrant.NewWithVectorsEnable(true),
 			WithPayload:    qdrant.NewWithPayloadEnable(true),
-			Limit:          &limit,
-		})
+		}
+
+		if e.QdrantLimit > 0 {
+			log.Printf("[getQdrantPoints] limiting qdrant search to %u results.\n", e.QdrantLimit)
+			limit := e.QdrantLimit
+			queryPoints.Limit = &limit
+		}
+
+		sp, err := e.QdrantClient.Query(context.Background(), queryPoints)
 
 		if err != nil {
 			log.Printf("[getQdrantPoints] qdrant error: %s\n", err.Error())

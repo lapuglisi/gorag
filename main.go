@@ -5,20 +5,23 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 
 	gorag_engine "github.com/lapuglisi/gorag/v2/engine"
 )
 
 const (
-	HttpDefaultPort  string = "9091"
-	HttpDefaultHost  string = "localhost"
-	QdrantDefaultUri string = "localhost:6334"
+	HttpDefaultPort    string = "9091"
+	HttpDefaultHost    string = "localhost"
+	QdrantDefaultUri   string = "localhost:6334"
+	QdrantDefaultLimit int64  = 0
 
 	GoragEnvHttpPort    string = "GORAG_ARG_HTTP_PORT"
 	GoragEnvHttpHost    string = "GORAG_ARG_HTTP_HOST"
 	GoRagEnvEmbedServer string = "GORAG_ARG_EMBED_SERVER"
 	GoRagEnvLlamaServer string = "GORAG_ARG_LLAMA_SERVER"
 	GoRagEnvQdrantUri   string = "GORAG_ARG_QDRANT_URI"
+	GoRagEnvQdrantLimit string = "GORAG_ARG_QDRANT_LIMIT"
 )
 
 type AppOptions struct {
@@ -27,6 +30,7 @@ type AppOptions struct {
 	QdrantUri   string
 	EmbedServer string
 	LlamaServer string
+	QdrantLimit int64
 }
 
 func getEnvOrDefault(key string, value string) string {
@@ -62,6 +66,12 @@ func setupEnvironment(opts *AppOptions) (err error) {
 	envEmbedServer := getEnvOrDefault(GoRagEnvEmbedServer, "")
 	envLlamaServer := getEnvOrDefault(GoRagEnvLlamaServer, "")
 	envQdrantUri := getEnvOrDefault(GoRagEnvQdrantUri, QdrantDefaultUri)
+	envQdrantLimit := uint64(0)
+
+	envLimit := getEnvOrDefault(GoRagEnvQdrantLimit, fmt.Sprintf("%u", QdrantDefaultLimit))
+	if s, err := strconv.ParseUint(envLimit, 10, 64); err == nil {
+		envQdrantLimit = s
+	}
 
 	flags := flag.NewFlagSet("gorag-server", flag.ExitOnError)
 
@@ -76,6 +86,8 @@ func setupEnvironment(opts *AppOptions) (err error) {
 	flags.StringVar(&(opts.LlamaServer), "llama", "",
 		"Llama API server (env "+GoRagEnvLlamaServer+")")
 	flags.BoolVar(&callHelp, "help", false, "show usage/help (that's me)")
+	flags.Int64Var(&(opts.QdrantLimit), "qdrant-limit", QdrantDefaultLimit,
+		"Default limit to use when querying qdrant (env "+GoRagEnvQdrantLimit+")")
 
 	flags.Parse(os.Args[1:])
 	if !flags.Parsed() {
@@ -89,24 +101,28 @@ func setupEnvironment(opts *AppOptions) (err error) {
 	}
 
 	// Poor man's approach. Kind of ridiculous
-	if len(envHttpHost) > 0 {
+	if len(opts.HttpHost) == 0 {
 		opts.HttpHost = envHttpHost
 	}
 
-	if len(envHttpPort) > 0 {
+	if len(opts.HttpPort) == 0 {
 		opts.HttpPort = envHttpPort
 	}
 
-	if len(envQdrantUri) > 0 {
+	if len(opts.QdrantUri) == 0 {
 		opts.QdrantUri = envQdrantUri
 	}
 
-	if len(envEmbedServer) > 0 {
+	if len(opts.EmbedServer) == 0 {
 		opts.EmbedServer = envEmbedServer
 	}
 
-	if len(envLlamaServer) > 0 {
+	if len(opts.LlamaServer) == 0 {
 		opts.LlamaServer = envLlamaServer
+	}
+
+	if opts.QdrantLimit == 0 {
+		opts.QdrantLimit = int64(envQdrantLimit)
 	}
 
 	// Now for consistency
@@ -132,12 +148,14 @@ func main() {
 	log.Println("QdrantUri is ......", options.QdrantUri)
 	log.Println("EmbedServer is ....", options.EmbedServer)
 	log.Println("LlamaServer is ....", options.LlamaServer)
+	log.Println("QdrantLimit is ....", options.QdrantLimit)
 
 	eo = gorag_engine.EngineOptions{
 		ServerUri:   fmt.Sprintf("%s:%s", options.HttpHost, options.HttpPort),
 		QdrantUri:   options.QdrantUri,
 		EmbedServer: options.EmbedServer,
 		LlamaServer: options.LlamaServer,
+		QdrantLimit: uint64(options.QdrantLimit),
 	}
 
 	ge := gorag_engine.NewEngine()
