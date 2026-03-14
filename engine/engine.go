@@ -13,6 +13,15 @@ import (
 	"github.com/qdrant/go-client/qdrant"
 )
 
+const (
+	EmbedRequestDefaultTemp float32 = 0.8
+	ContextPromptContent    string  = "You are a helpful and a hundred percent realiable assistant.\n" +
+		"Answer the question using all the information in the provided context.\n" +
+		"Make sure to answer the question in the original language.\n\n" +
+		"Context: %s\n\n" +
+		"Question: %s"
+)
+
 // Llama json specs
 type EmbedRequestJson struct {
 	Input string `json:"input"`
@@ -205,7 +214,7 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	er.Temperature = 0.5
+	er.Temperature = EmbedRequestDefaultTemp
 	if err = json.Unmarshal(data, &er); err != nil {
 		e.sendResponseError(err.Error(), resp)
 		return
@@ -228,24 +237,16 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 	// Consider using 'i' and operate on 'Messages' accordingly
 	if len(points) > 0 {
 		lcr = llamaCompletionRequest{
-			Messages: make([]llamaCompletionMessages, 2),
+			Messages: make([]llamaCompletionMessages, 1),
 			Stream:   true,
 		}
 
-		sysmsg := fmt.Sprintf(
-			"You are a very helpfull assistant an a hundred percent reliable.\n"+
-				"Use the provided context to answer to the user's query/question.\n"+
-				"Make sure to answer in the original language.\n"+
-				"Context: %s", strings.Join(points, "\n"))
+		prompt := fmt.Sprintf(ContextPromptContent, strings.Join(points, " "), er.Prompt)
+		log.Printf("[handleCompletion] prompt is %s\n", prompt)
 
 		lcr.Messages[0] = llamaCompletionMessages{
-			Role:    "system",
-			Content: sysmsg,
-		}
-
-		lcr.Messages[1] = llamaCompletionMessages{
 			Role:    "user",
-			Content: er.Prompt,
+			Content: prompt,
 		}
 	} else {
 		lcr = llamaCompletionRequest{
