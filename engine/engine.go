@@ -204,7 +204,6 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 	var er EngineCompletionRequest
 	var lcr llamaCompletionRequest
 
-	resp.Header().Add("Access-Control-Allow-Origin", "https://busco.luizpuglisi.me")
 	resp.Header().Add("Access-Control-Allow-Headers", "authorization, content-type")
 	resp.WriteHeader(http.StatusOK)
 
@@ -225,8 +224,6 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	log.Printf("[handleCompletion] prompt is %s\n", er.Prompt)
-
 	// Get points from qdrant
 	points, err := e.getQdrantPoints(er.Prompt, er.Temperature)
 	if err != nil {
@@ -234,30 +231,24 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 		return
 	}
 
+	var prompt string
 	// Consider using 'i' and operate on 'Messages' accordingly
 	if len(points) > 0 {
-		lcr = llamaCompletionRequest{
-			Messages: make([]llamaCompletionMessages, 1),
-			Stream:   true,
-		}
-
-		prompt := fmt.Sprintf(ContextPromptContent, strings.Join(points, " "), er.Prompt)
-		log.Printf("[handleCompletion] prompt is %s\n", prompt)
-
-		lcr.Messages[0] = llamaCompletionMessages{
-			Role:    "user",
-			Content: prompt,
-		}
+		prompt = fmt.Sprintf(ContextPromptContent, strings.Join(points, " "), er.Prompt)
 	} else {
-		lcr = llamaCompletionRequest{
-			Messages: make([]llamaCompletionMessages, 1),
-			Stream:   true,
-		}
+		prompt = er.Prompt
+	}
 
-		lcr.Messages[0] = llamaCompletionMessages{
-			Role:    "user",
-			Content: er.Prompt,
-		}
+	log.Printf("[handleCompletion] prompt is '%s'\n", prompt)
+
+	lcr = llamaCompletionRequest{
+		Messages: make([]llamaCompletionMessages, 1),
+		Stream:   true,
+	}
+
+	lcr.Messages[0] = llamaCompletionMessages{
+		Role:    "user",
+		Content: prompt,
 	}
 
 	log.Printf("[handleCompletion] getting completion for: %v\n", lcr)
