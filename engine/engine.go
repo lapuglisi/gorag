@@ -18,8 +18,8 @@ const (
 	ContextPromptContent    string  = "You are a helpful and a hundred percent realiable assistant.\n" +
 		"Answer the question using all the information in the provided context.\n" +
 		"Make sure to answer the question in the original language.\n\n" +
-		"Context: %s\n\n" +
-		"Question: %s"
+		"Question: %s\n\n" +
+		"Context: %s\n\n"
 )
 
 // Llama json specs
@@ -47,14 +47,14 @@ type EngineOptions struct {
 	QdrantUri   string
 	EmbedServer string
 	LlamaServer string
-	QdrantLimit uint64
+	QdrantLimit int64
 }
 
 type GoRagEngine struct {
 	ServerUrl    string
 	QdrantClient *qdrant.Client
 	LlamaClient  *LlamaEngine
-	QdrantLimit  uint64
+	QdrantLimit  int64
 }
 
 func init() {
@@ -234,7 +234,7 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 	var prompt string
 	// Consider using 'i' and operate on 'Messages' accordingly
 	if len(points) > 0 {
-		prompt = fmt.Sprintf(ContextPromptContent, strings.Join(points, " "), er.Prompt)
+		prompt = fmt.Sprintf(ContextPromptContent, er.Prompt, strings.Join(points, "\n"))
 	} else {
 		prompt = er.Prompt
 	}
@@ -308,7 +308,7 @@ func (e *GoRagEngine) getQdrantPoints(input string, temp float32) (data []string
 
 		if e.QdrantLimit > 0 {
 			log.Printf("[getQdrantPoints] limiting qdrant search to %u results.\n", e.QdrantLimit)
-			limit := e.QdrantLimit
+			limit := uint64(e.QdrantLimit)
 			queryPoints.Limit = &limit
 		}
 

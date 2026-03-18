@@ -30,7 +30,7 @@ type AppOptions struct {
 	QdrantUri   string
 	EmbedServer string
 	LlamaServer string
-	QdrantLimit uint64
+	QdrantLimit int64
 }
 
 func getEnvOrDefault(key string, value string) string {
@@ -42,10 +42,11 @@ func getEnvOrDefault(key string, value string) string {
 	return s
 }
 
-func getEnvOrDefaultInt64(key string, value uint64) uint64 {
+func getEnvOrDefaultInt64(key string, value int64) int64 {
 
 	env := os.Getenv(key)
-	if s, err := strconv.ParseUint(env, 10, 64); err == nil {
+	log.Printf("got %s for %s\n", env, key)
+	if s, err := strconv.ParseInt(env, 10, 64); err == nil {
 		return s
 	}
 
@@ -77,7 +78,7 @@ func setupEnvironment(opts *AppOptions) (err error) {
 	envLlamaServer := getEnvOrDefault(GoRagEnvLlamaServer, "")
 	envQdrantUri := getEnvOrDefault(GoRagEnvQdrantUri, QdrantDefaultUri)
 
-	envQdrantLimit := getEnvOrDefaultInt64(GoRagEnvQdrantLimit, uint64(QdrantDefaultLimit))
+	envQdrantLimit := getEnvOrDefaultInt64(GoRagEnvQdrantLimit, QdrantDefaultLimit)
 
 	flags := flag.NewFlagSet("gorag-server", flag.ExitOnError)
 
@@ -92,7 +93,7 @@ func setupEnvironment(opts *AppOptions) (err error) {
 	flags.StringVar(&(opts.LlamaServer), "llama", "",
 		"Llama API server (env "+GoRagEnvLlamaServer+")")
 	flags.BoolVar(&callHelp, "help", false, "show usage/help (that's me)")
-	flags.Uint64Var(&(opts.QdrantLimit), "qdrant-limit", 0,
+	flags.Int64Var(&(opts.QdrantLimit), "qdrant-limit", 0,
 		"Default limit to use when querying qdrant (env "+GoRagEnvQdrantLimit+")")
 
 	flags.Parse(os.Args[1:])
@@ -128,7 +129,7 @@ func setupEnvironment(opts *AppOptions) (err error) {
 	}
 
 	if opts.QdrantLimit == 0 {
-		opts.QdrantLimit = envQdrantLimit
+		opts.QdrantLimit = int64(envQdrantLimit)
 	}
 
 	// Now for consistency
@@ -161,7 +162,7 @@ func main() {
 		QdrantUri:   options.QdrantUri,
 		EmbedServer: options.EmbedServer,
 		LlamaServer: options.LlamaServer,
-		QdrantLimit: uint64(options.QdrantLimit),
+		QdrantLimit: options.QdrantLimit,
 	}
 
 	ge := gorag_engine.NewEngine()
