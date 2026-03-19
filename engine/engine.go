@@ -13,18 +13,6 @@ import (
 	"github.com/qdrant/go-client/qdrant"
 )
 
-const (
-	EmbedRequestDefaultTemp float32 = 0.8
-
-	LlamaRagSystemPrompt string = "You are a very helpfull asssistant expert in answering " +
-		"questions in a RAG pipeline when provided contexts.\n" +
-		"Make sure to answer the question in the original language."
-
-	LlamaRagAssistantPrompt string = "Answer the user query using the provided context." +
-		"Use as much information from the context as possible." +
-		"If you cannot find an answer with the context, simply state that you don't know"
-)
-
 // Llama json specs
 type EmbedRequestJson struct {
 	Input string `json:"input"`
@@ -43,21 +31,42 @@ type EngineResponseJson struct {
 type EngineCompletionRequest struct {
 	Prompt      string  `json:"prompt"`
 	Temperature float32 `json:"temperature"`
+	Stream      bool    `json:"stream,omitempty"`
+	TopK        int     `json:"top_k,omitempty"`
+	TopP        float32 `json:"top_p,omitempty"`
+	Predict     int     `json:"n_predict,omitempty"`
+	CachePrompt bool    `json:"cache_prompt,omitempty"`
+	MaxTokens   int     `json:"max_tokens,omitempty"`
 }
+
+func NewEngineCompletionRequest() *EngineCompletionRequest {
+	return &EngineCompletionRequest{
+		Temperature: LlamaDefaultTemperature,
+		Stream:      true,
+		TopK:        LlamaDefaultTopK,
+		TopP:        LlamaDefaultTopP,
+		Predict:     LlamaDefaultNPredict,
+		CachePrompt: true,
+	}
+}
+
+//
+//
+//
 
 type EngineOptions struct {
 	ServerUri   string
 	QdrantUri   string
 	EmbedServer string
 	LlamaServer string
-	QdrantLimit int64
 }
 
 type GoRagEngine struct {
 	ServerUrl    string
 	QdrantClient *qdrant.Client
 	LlamaClient  *LlamaEngine
-	QdrantLimit  int64
+	// privates
+	qdrantLimit int64
 }
 
 func init() {
@@ -66,8 +75,72 @@ func init() {
 func NewEngine() (e *GoRagEngine) {
 	return &GoRagEngine{
 		QdrantClient: nil,
+		ServerUrl:    "",
+		LlamaClient:  nil,
+		qdrantLimit:  -1,
 	}
 }
+
+// ------------------------------------------------------------------------
+// GoRagEngine properties
+// ------------------------------------------------------------------------
+func (e *GoRagEngine) WithQdrantUrl(url string) *GoRagEngine {
+	var err error
+
+	a := strings.Split(url, ":")
+	if len(a) != 2 {
+		log.Printf("invalid QdrantUri format: got '%s', want 'HOST:PORT'", url)
+		return e
+	}
+
+	qdrantHost := a[0]
+	qdrantPort, _ := strconv.ParseInt(a[1], 10, 32)
+
+	log.Printf("[GoRagEngine] Qdrant client: %s:%d\n", qdrantHost, qdrantPort)
+	e.QdrantClient, err = qdrant.NewClient(&qdrant.Config{
+		Host: qdrantHost,
+		Port: int(qdrantPort),
+	})
+
+	if err != nil {
+		log.Printf("[GoRagEngine::WithQdrantUrl] error: %s\n", err.Error())
+	}
+
+	return e
+}
+
+func (e *GoRagEngine) WithQdrantLimit(limit int64) *GoRagEngine {
+	e.qdrantLimit = limit
+	return e
+}
+
+func (e *GoRagEngine) WithLlamaServer(url string) *GoRagEngine {
+	if e.LlamaClient == nil {
+		e.LlamaClient = NewLlamaEngine("", "")
+	}
+
+	e.LlamaClient.LlamaServer = url
+
+	return e
+}
+
+func (e *GoRagEngine) WithEmbedServer(url string) *GoRagEngine {
+	if e.LlamaClient == nil {
+		e.LlamaClient = NewLlamaEngine("", "")
+	}
+
+	e.LlamaClient.EmbedServer = url
+
+	return e
+}
+
+func (e *GoRagEngine) WithListenUrl(url string) *GoRagEngine {
+	e.ServerUrl = url
+	return e
+}
+
+// ------------------------------------------------------------------------
+// ------------------------------------------------------------------------
 
 func (e *GoRagEngine) Setup(options EngineOptions) (err error) {
 	log.Println("[GoRagEngine] Setting up.")
@@ -93,7 +166,6 @@ func (e *GoRagEngine) Setup(options EngineOptions) (err error) {
 
 	e.LlamaClient = NewLlamaEngine(options.EmbedServer, options.LlamaServer)
 	e.ServerUrl = options.ServerUri
-	e.QdrantLimit = options.QdrantLimit
 
 	return nil
 }
@@ -204,8 +276,8 @@ func (e *GoRagEngine) handleEmbedding(resp http.ResponseWriter, req *http.Reques
 }
 
 func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Request) {
-	var er EngineCompletionRequest
-	var lcr llamaCompletionRequest
+	var er *EngineCompletionRequest = NewEngineCompletionRequest()
+	var lcr *llamaCompletionRequest
 
 	resp.Header().Add("Access-Control-Allow-Headers", "authorization, content-type")
 	resp.WriteHeader(http.StatusOK)
@@ -216,7 +288,6 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	er.Temperature = EmbedRequestDefaultTemp
 	if err = json.Unmarshal(data, &er); err != nil {
 		e.sendResponseError(err.Error(), resp)
 		return
@@ -234,34 +305,30 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	// Consider using 'i' and operate on 'Messages' accordingly
-	lcr = llamaCompletionRequest{
-		Messages:    make([]llamaCompletionMessages, 0),
-		Stream:      true,
-		Temperature: er.Temperature,
-	}
-
-	lcr.Messages = LlamaAppendRequestMessage(lcr.Messages, LlamaRoleSystem, LlamaRagSystemPrompt)
+	var messages []llamaCompletionMessage = make([]llamaCompletionMessage, 0)
+	messages = LlamaAppendRequestMessage(messages, LlamaRoleSystem, LlamaRagSystemPrompt)
 
 	if len(points) > 0 {
 		var context string = strings.Join(points, "\n")
-		lcr = llamaCompletionRequest{
-			Messages: make([]llamaCompletionMessages, 0),
-			Stream:   true,
-		}
 
 		// Create a efficient prompt to send the context along with the user's query
-		lcr.Messages = LlamaAppendRequestMessage(lcr.Messages, LlamaRoleUser, er.Prompt)
-		lcr.Messages = LlamaAppendRequestMessage(lcr.Messages, LlamaRoleAssistant, LlamaRagAssistantPrompt)
-		lcr.Messages = LlamaAppendRequestMessage(lcr.Messages, LlamaRoleUser, fmt.Sprintf("Context: %s", context))
+		messages = LlamaAppendRequestMessage(messages, LlamaRoleUser, er.Prompt)
+		messages = LlamaAppendRequestMessage(messages, LlamaRoleAssistant, LlamaRagAssistantPrompt)
+		messages = LlamaAppendRequestMessage(messages, LlamaRoleUser, fmt.Sprintf("Context: %s", context))
 	} else {
-		lcr = llamaCompletionRequest{
-			Messages: make([]llamaCompletionMessages, 0),
-			Stream:   true,
-		}
-
-		lcr.Messages = LlamaAppendRequestMessage(lcr.Messages, LlamaRoleUser, er.Prompt)
+		messages = LlamaAppendRequestMessage(messages, LlamaRoleUser, er.Prompt)
 	}
+
+	// Configure extra parameters for llamaCompletionRequest
+	lcr = NewCompletionRequest().
+		WithMessages(messages).
+		WithTopK(er.TopK).
+		WithTopP(er.TopP).
+		WithNPredict(er.Predict).
+		WithStream(er.Stream).
+		WithTemperature(er.Temperature).
+		WithCachePrompt(er.CachePrompt).
+		WithMaxTokens(er.MaxTokens)
 
 	log.Printf("[handleCompletion] getting completion for: %v\n", lcr)
 
@@ -304,7 +371,7 @@ func (e *GoRagEngine) getQdrantPoints(input string, temp float32) (data []string
 
 	collection := e.getCollectionFromModel(embeds.Model)
 
-	log.Printf("[getQdrantPoints] using qdrant limit: %ld\n", e.QdrantLimit)
+	log.Printf("[getQdrantPoints] using qdrant limit: %ld\n", e.qdrantLimit)
 	log.Printf("[getQdrantPoints] using collection: '%s'\n", collection)
 
 	for _, embed := range embeds.Embeddings {
@@ -318,9 +385,9 @@ func (e *GoRagEngine) getQdrantPoints(input string, temp float32) (data []string
 			WithPayload:    qdrant.NewWithPayloadEnable(true),
 		}
 
-		if e.QdrantLimit > 0 {
-			log.Printf("[getQdrantPoints] limiting qdrant search to %u results.\n", e.QdrantLimit)
-			limit := uint64(e.QdrantLimit)
+		if e.qdrantLimit > 0 {
+			log.Printf("[getQdrantPoints] limiting qdrant search to %u results.\n", e.qdrantLimit)
+			limit := uint64(e.qdrantLimit)
 			queryPoints.Limit = &limit
 		}
 
@@ -337,20 +404,27 @@ func (e *GoRagEngine) getQdrantPoints(input string, temp float32) (data []string
 			log.Printf("[getQdrantPoints] point %s has %d payloads, score %f\n",
 				point.Id, len(point.Payload), point.Score)
 
-			if point.Score < temp {
-				log.Printf("[getQdrantPoints] point %s has score %f, lower than temp %f. Skipping.\n",
-					point.Id, point.Score, temp)
-				continue
-			}
+			/*
+				if point.Score < temp {
+					log.Printf("[getQdrantPoints] point %s has score %f, lower than temp %f. Skipping.\n",
+						point.Id, point.Score, temp)
+					continue
+				}
+			*/
 
-			payload := point.Payload["source"]
-
-			if payload == nil {
+			source := point.Payload["source"]
+			document := point.Payload["document"]
+			if source == nil {
 				log.Printf("[getQdrantPoints] payload 'source' not found for point %s. Skipping.\n", point.Id)
 				continue
 			}
 
-			data = append(data, payload.GetStringValue())
+			input := source.GetStringValue()
+			if document != nil {
+				input = fmt.Sprintf("%s\n\n(References: %s)", input, document.GetStringValue())
+			}
+
+			data = append(data, input)
 		}
 	}
 
