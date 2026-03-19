@@ -10,6 +10,13 @@ import (
 	"net/http"
 )
 
+// Constants
+const (
+	LlamaRoleUser      string = "user"
+	LlamaRoleSystem    string = "system"
+	LlamaRoleAssistant        = "assistant"
+)
+
 // JSON structures for API requests
 type llamaEmbedRequest struct {
 	Input string `json:"input"`
@@ -74,6 +81,17 @@ func NewLlamaEngine(es string, ls string) (e *LlamaEngine) {
 		EmbedServer: es,
 		LlamaServer: ls,
 	}
+}
+
+func LlamaAppendRequestMessage(
+	msgs []llamaCompletionMessages,
+	role string,
+	content string) (result []llamaCompletionMessages) {
+
+	return append(msgs, llamaCompletionMessages{
+		Role:    role,
+		Content: content,
+	})
 }
 
 // GetEmbeddings
@@ -169,7 +187,12 @@ func (l *LlamaEngine) GetCompletions(
 	for {
 		stream, err := reader.ReadString('\n')
 		if err != nil {
-			log.Printf("resp read: %s\n", err.Error())
+			if err == io.EOF {
+				callback(stream)
+				log.Printf("EOF from response.")
+			} else {
+				log.Printf("resp read error: %s\n", err.Error())
+			}
 			break
 		}
 

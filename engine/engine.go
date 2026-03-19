@@ -15,11 +15,14 @@ import (
 
 const (
 	EmbedRequestDefaultTemp float32 = 0.8
-	ContextPromptContent    string  = "You are a helpful and a hundred percent realiable assistant.\n" +
-		"Answer the question using all the information in the provided context.\n" +
-		"Make sure to answer the question in the original language.\n\n" +
-		"Question: %s\n\n" +
-		"Context: %s\n\n"
+
+	LlamaRagSystemPrompt string = "You are a very helpfull asssistant expert in answering " +
+		"questions in a RAG pipeline when provided contexts.\n" +
+		"Make sure to answer the question in the original language."
+
+	LlamaRagAssistantPrompt string = "Answer the user query using the provided context." +
+		"Use as much information from the context as possible." +
+		"If you cannot find an answer with the context, simply state that you don't know"
 )
 
 // Llama json specs
@@ -231,24 +234,33 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	var prompt string
 	// Consider using 'i' and operate on 'Messages' accordingly
-	if len(points) > 0 {
-		prompt = fmt.Sprintf(ContextPromptContent, er.Prompt, strings.Join(points, "\n"))
-	} else {
-		prompt = er.Prompt
-	}
-
-	log.Printf("[handleCompletion] prompt is '%s'\n", prompt)
-
 	lcr = llamaCompletionRequest{
-		Messages: make([]llamaCompletionMessages, 1),
-		Stream:   true,
+		Messages:    make([]llamaCompletionMessages, 0),
+		Stream:      true,
+		Temperature: er.Temperature,
 	}
 
-	lcr.Messages[0] = llamaCompletionMessages{
-		Role:    "user",
-		Content: prompt,
+	lcr.Messages = LlamaAppendRequestMessage(lcr.Messages, LlamaRoleSystem, LlamaRagSystemPrompt)
+
+	if len(points) > 0 {
+		var context string = strings.Join(points, "\n")
+		lcr = llamaCompletionRequest{
+			Messages: make([]llamaCompletionMessages, 0),
+			Stream:   true,
+		}
+
+		// Create a efficient prompt to send the context along with the user's query
+		lcr.Messages = LlamaAppendRequestMessage(lcr.Messages, LlamaRoleUser, er.Prompt)
+		lcr.Messages = LlamaAppendRequestMessage(lcr.Messages, LlamaRoleAssistant, LlamaRagAssistantPrompt)
+		lcr.Messages = LlamaAppendRequestMessage(lcr.Messages, LlamaRoleUser, fmt.Sprintf("Context: %s", context))
+	} else {
+		lcr = llamaCompletionRequest{
+			Messages: make([]llamaCompletionMessages, 0),
+			Stream:   true,
+		}
+
+		lcr.Messages = LlamaAppendRequestMessage(lcr.Messages, LlamaRoleUser, er.Prompt)
 	}
 
 	log.Printf("[handleCompletion] getting completion for: %v\n", lcr)
@@ -292,7 +304,7 @@ func (e *GoRagEngine) getQdrantPoints(input string, temp float32) (data []string
 
 	collection := e.getCollectionFromModel(embeds.Model)
 
-	log.Printf("[getQdrantPoints] using qdrant limit: %u\n", e.QdrantLimit)
+	log.Printf("[getQdrantPoints] using qdrant limit: %ld\n", e.QdrantLimit)
 	log.Printf("[getQdrantPoints] using collection: '%s'\n", collection)
 
 	for _, embed := range embeds.Embeddings {
