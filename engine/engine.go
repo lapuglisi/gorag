@@ -13,6 +13,10 @@ import (
 	"github.com/qdrant/go-client/qdrant"
 )
 
+const (
+	QdrantDefaultThreshold float32 = 0.7
+)
+
 // Llama json specs
 type EmbedRequestJson struct {
 	Input string `json:"input"`
@@ -37,6 +41,7 @@ type EngineCompletionRequest struct {
 	Predict     int     `json:"n_predict,omitempty"`
 	CachePrompt bool    `json:"cache_prompt,omitempty"`
 	MaxTokens   int     `json:"max_tokens,omitempty"`
+	Threshold   float32 `json:"threshold,omitempty"`
 }
 
 func NewEngineCompletionRequest() *EngineCompletionRequest {
@@ -47,6 +52,7 @@ func NewEngineCompletionRequest() *EngineCompletionRequest {
 		TopP:        LlamaDefaultTopP,
 		Predict:     LlamaDefaultNPredict,
 		CachePrompt: true,
+		Threshold:   QdrantDefaultThreshold,
 	}
 }
 
@@ -299,7 +305,7 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 	}
 
 	// Get points from qdrant
-	points, err := e.getQdrantPoints(er.Prompt, er.Temperature)
+	points, err := e.getQdrantPoints(er.Prompt, er.Threshold)
 	if err != nil {
 		e.sendResponseError(err.Error(), resp)
 		return
@@ -330,7 +336,7 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 		WithCachePrompt(er.CachePrompt).
 		WithMaxTokens(er.MaxTokens)
 
-	log.Printf("[handleCompletion] getting completion for: %v\n", lcr)
+	log.Printf("[handleCompletion] getting completion for: %V\n", lcr)
 
 	flusher, ok := resp.(http.Flusher)
 	if !ok {
@@ -358,7 +364,7 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 	})
 }
 
-func (e *GoRagEngine) getQdrantPoints(input string, temp float32) (data []string, err error) {
+func (e *GoRagEngine) getQdrantPoints(input string, threshold float32) (data []string, err error) {
 	data = make([]string, 0)
 
 	log.Printf("[getQdrantPoints] getting embeds from llama.\n")
@@ -371,8 +377,9 @@ func (e *GoRagEngine) getQdrantPoints(input string, temp float32) (data []string
 
 	collection := e.getCollectionFromModel(embeds.Model)
 
-	log.Printf("[getQdrantPoints] using qdrant limit: %ld\n", e.qdrantLimit)
 	log.Printf("[getQdrantPoints] using collection: '%s'\n", collection)
+	log.Printf("[getQdrantPoints] using qdrant limit: %d\n", e.qdrantLimit)
+	log.Printf("[getQdrantPoints] using score threshold: %.2f\n", threshold)
 
 	for _, embed := range embeds.Embeddings {
 		log.Printf("[getQdrantPoints] searching points for input...\n")
@@ -381,7 +388,6 @@ func (e *GoRagEngine) getQdrantPoints(input string, temp float32) (data []string
 		queryPoints := &qdrant.QueryPoints{
 			CollectionName: collection,
 			Query:          qdrant.NewQuery(embed...),
-			WithVectors:    qdrant.NewWithVectorsEnable(true),
 			WithPayload:    qdrant.NewWithPayloadEnable(true),
 		}
 
@@ -389,6 +395,10 @@ func (e *GoRagEngine) getQdrantPoints(input string, temp float32) (data []string
 			log.Printf("[getQdrantPoints] limiting qdrant search to %u results.\n", e.qdrantLimit)
 			limit := uint64(e.qdrantLimit)
 			queryPoints.Limit = &limit
+		}
+
+		if threshold > 0.0 {
+			queryPoints.ScoreThreshold = qdrant.PtrOf(threshold)
 		}
 
 		sp, err := e.QdrantClient.Query(context.Background(), queryPoints)
