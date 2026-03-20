@@ -336,7 +336,7 @@ func (e *GoRagEngine) handleCompletion(resp http.ResponseWriter, req *http.Reque
 		WithCachePrompt(er.CachePrompt).
 		WithMaxTokens(er.MaxTokens)
 
-	log.Printf("[handleCompletion] getting completion for: %V\n", lcr)
+	log.Printf("[handleCompletion] getting completion for: %+v\n", lcr)
 
 	flusher, ok := resp.(http.Flusher)
 	if !ok {
